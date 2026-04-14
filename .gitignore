@@ -1,0 +1,13 @@
+# Ignora i file oggetto (risultati intermedi della compilazione)
+*.o
+
+# Ignora gli eseguibili finali
+server_app
+client_app
+
+# Ignora le cartelle di configurazione degli editor (VS Code, ecc.)
+.vscode/
+.idea/
+
+# Ignora file di sistema come .DS_Store (se uno di voi usa Mac in futuro)
+.DS_Store

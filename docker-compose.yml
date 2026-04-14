@@ -1,0 +1,11 @@
+version: '3.8'
+
+services:
+  dungeon_server:
+    build: .
+    ports:
+      - "8080:8080" # Mappa la porta 8080 del tuo PC alla 8080 del container
+    volumes:
+      - .:/app      # Sincronizza i file in tempo reale tra PC e container
+    # Questa riga permette di ricompilare e riavviare automaticamente ad ogni avvio
+    command: bash -c "make server_app && ./server/server_app"
