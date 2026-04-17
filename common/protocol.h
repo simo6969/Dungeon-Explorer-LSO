@@ -1,14 +1,17 @@
 #ifndef PROTOCOL_H
 #define PROTOCOL_H
 
-// Costanti di base
 #define PORTA_SERVER 8080
 #define MAX_PLAYERS 4
 
-// Struttura base per un messaggio (la espanderemo in seguito)
+// Tipi di messaggio
+#define MSG_SISTEMA 1
+#define MSG_CHAT 2
+#define MSG_ERRORE 3
+
 typedef struct {
-    int tipo_messaggio; // Es: 1 = Connessione, 2 = Mossa, 3 = Chat
-    char payload[256];  // Il contenuto testuale del messaggio
+    int tipo_messaggio;
+    char payload[256];
 } PacchettoRete;
 
 #endif
