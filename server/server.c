@@ -6,23 +6,22 @@
 #include <sys/socket.h>
 #include <pthread.h>
 #include "protocol.h"
+#include "game_logic.h"
 
-// --- VARIABILI GLOBALI CONDIVISE TRA I THREAD ---
 int giocatori_connessi[MAX_PLAYERS];
 int num_giocatori = 0;
-pthread_mutex_t lobby_mutex = PTHREAD_MUTEX_INITIALIZER; // Il semaforo!
+pthread_mutex_t lobby_mutex = PTHREAD_MUTEX_INITIALIZER; 
 
-// Funzione di utilità per inviare un messaggio a TUTTI i giocatori nella lobby
 void trasmetti_a_tutti(const char *messaggio) {
     PacchettoRete pacchetto;
     pacchetto.tipo_messaggio = MSG_SISTEMA;
     strncpy(pacchetto.payload, messaggio, sizeof(pacchetto.payload) - 1);
 
-    pthread_mutex_lock(&lobby_mutex); // Blocco l'array
+    pthread_mutex_lock(&lobby_mutex); 
     for (int i = 0; i < num_giocatori; i++) {
         send(giocatori_connessi[i], &pacchetto, sizeof(PacchettoRete), 0);
     }
-    pthread_mutex_unlock(&lobby_mutex); // Sblocco l'array
+    pthread_mutex_unlock(&lobby_mutex); 
 }
 
 // ---------------------------------------------------------
@@ -32,30 +31,25 @@ void *gestisci_giocatore(void *arg) {
     int client_socket = *(int *)arg;
     free(arg); 
 
-    // 1. Aggiungiamo il giocatore all'array globale in modo sicuro
     pthread_mutex_lock(&lobby_mutex);
     giocatori_connessi[num_giocatori] = client_socket;
     num_giocatori++;
     int quanti_siamo = num_giocatori;
     pthread_mutex_unlock(&lobby_mutex);
 
-    // 2. Avvisiamo tutti che è entrato qualcuno di nuovo!
+  
     char avviso[256];
     snprintf(avviso, sizeof(avviso), "Un nuovo eroe è entrato! Siamo in %d/%d nella lobby.", quanti_siamo, MAX_PLAYERS);
     printf("[SERVER] %s\n", avviso);
     trasmetti_a_tutti(avviso);
 
-    // 3. Il server si mette in ascolto infinito per questo giocatore
     PacchettoRete pacchetto_in;
     while (recv(client_socket, &pacchetto_in, sizeof(PacchettoRete), 0) > 0) {
-        // Se riceve un messaggio, lo stampa nel server (in futuro lo inoltrerà agli altri)
         printf("[GIOCATORE %d DICE]: %s\n", client_socket, pacchetto_in.payload);
     }
 
-    // --- SE IL CICLO FINISCE, IL CLIENT SI E' DISCONNESSO ---
     printf("[THREAD] Il giocatore %d si è disconnesso.\n", client_socket);
     
-    // Rimuoviamo il giocatore dall'array (per semplicità ora decrementiamo solo il contatore)
     pthread_mutex_lock(&lobby_mutex);
     num_giocatori--;
     pthread_mutex_unlock(&lobby_mutex);
@@ -84,12 +78,15 @@ int main() {
     if (bind(server_socket, (struct sockaddr *)&address, sizeof(address)) < 0) exit(EXIT_FAILURE);
     if (listen(server_socket, MAX_PLAYERS) < 0) exit(EXIT_FAILURE);
 
+    Dungeon mappa_partita;
+    genera_dungeon(&mappa_partita);
+    stampa_dungeon_debug(&mappa_partita);
+
     printf("[SERVER-INFO] Lobby aperta. In attesa di %d giocatori...\n", MAX_PLAYERS);
 
     while(1) {
         if ((client_socket = accept(server_socket, (struct sockaddr *)&address, &addrlen)) < 0) continue;
 
-        // Se la lobby è piena, cacciamo il giocatore
         pthread_mutex_lock(&lobby_mutex);
         if (num_giocatori >= MAX_PLAYERS) {
             PacchettoRete msg_rifiuto;
