@@ -29,6 +29,7 @@ typedef struct {
     Stanza griglia[DIM_MAPPA][DIM_MAPPA];
     Giocatore eroi[MAX_PLAYERS];
     int num_eroi_attivi;
+    int partita_finita;
 } Dungeon;
 
 // Funzioni aggiornate

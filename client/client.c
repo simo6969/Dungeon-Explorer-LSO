@@ -57,6 +57,14 @@ int main() {
         printf(">>> MESSAGGIO: %s\n", stato_in.log_eventi);
         disegna_schermo(&stato_in.mappa);
 
+        if (stato_in.mappa.partita_finita == 1) {
+            printf("\n🎉 MISSIONE COMPIUTA! Il gruppo e' salvo. Siete degli eroi!\n\n");
+            break; 
+        } else if (stato_in.mappa.partita_finita == -1) {
+            printf("\n💀 GAME OVER! Tutti gli eroi sono morti nel dungeon...\n\n");
+            break; 
+        }
+
         int scelta = 0;
         printf("\nE' il tuo turno!\n");
         printf("1. Nord (Su)\n2. Sud (Giu')\n3. Est (Destra)\n4. Ovest (Sinistra)\n");

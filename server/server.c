@@ -57,16 +57,29 @@ void *gestisci_giocatore(void *arg) {
         if (mosse_ricevute == partita.num_eroi_attivi) {
             printf("[SERVER] Tutti pronti! Eseguo il turno...\n");
             
-            // Muovo tutti quanti
+            int vivi_rimasti = 0;
             for (int i = 0; i < partita.num_eroi_attivi; i++) {
                 if (partita.eroi[i].hp > 0) {
                     muovi_giocatore(&partita, i, partita.eroi[i].direzione_scelta);
                     partita.eroi[i].mossa_pronta = 0; 
+                    
+                    if (partita.eroi[i].hp > 0) vivi_rimasti++; 
                 }
+            }
+
+            if (vivi_rimasti == 0 && partita.partita_finita != 1) {
+                partita.partita_finita = -1; 
             }
             
             mosse_ricevute = 0; 
-            trasmetti_stato_a_tutti("Turno concluso! Cosa fai adesso?");
+            
+            if (partita.partita_finita == 1) {
+                trasmetti_stato_a_tutti("L'USCITA È STATA TROVATA! VITTORIA!");
+            } else if (partita.partita_finita == -1) {
+                trasmetti_stato_a_tutti("IL GRUPPO È STATO ANNIENTATO...");
+            } else {
+                trasmetti_stato_a_tutti("Turno concluso! Cosa fai adesso?");
+            }
             
             pthread_cond_broadcast(&cond_turno); 
         } 
@@ -75,7 +88,12 @@ void *gestisci_giocatore(void *arg) {
             pthread_cond_wait(&cond_turno, &mutex_partita);
         }
 
-        pthread_mutex_unlock(&mutex_partita); 
+        if (partita.partita_finita != 0) {
+            pthread_mutex_unlock(&mutex_partita);
+            break; 
+        }
+
+        pthread_mutex_unlock(&mutex_partita);
     }
 
     printf("[THREAD] Giocatore %d disconnesso.\n", client_socket);

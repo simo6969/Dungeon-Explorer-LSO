@@ -63,6 +63,7 @@ void aggiungi_giocatore(Dungeon *dungeon, int socket_id) {
     dungeon->eroi[index].mossa_pronta = 0; // Ancora non ha deciso cosa fare
     
     dungeon->num_eroi_attivi++;
+    dungeon->partita_finita = 0;
     printf("[GAME] Giocatore %d spawnato alle coordinate (0,0).\n", socket_id);
 }
 
@@ -116,7 +117,8 @@ void muovi_giocatore(Dungeon *dungeon, int player_index, int direzione) {
             break;
             
         case USCITA:
-            printf("\n🏆 [GAME] IL GIOCATORE %d HA TROVATO L'USCITA! VITTORIA! 🏆\n", eroe->socket_id);
+            printf("\n🏆 [GAME] IL GIOCATORE %d HA TROVATO L'USCITA! 🏆\n", eroe->socket_id);
+            dungeon->partita_finita = 1;
             break;
     }
 }
