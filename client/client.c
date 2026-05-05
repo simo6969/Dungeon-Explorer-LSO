@@ -6,9 +6,6 @@
 #include <sys/socket.h>
 #include "protocol.h"
 
- 
- 
- 
 static int recv_all(int sock, void *buf, size_t len) {
     size_t totale = 0;
     char *p = (char *)buf;
@@ -45,9 +42,9 @@ static void disegna_schermo(const Dungeon *d, int mio_pid) {
             }
 
             if (pid_in_stanza == mio_pid && pid_in_stanza >= 0) {
-                printf("[ @ ] ");                           
+                printf("[ @ ] ");
             } else if (pid_in_stanza >= 0) {
-                printf("[ %d ] ", pid_in_stanza);           
+                printf("[ %d ] ", pid_in_stanza);
             } else if (d->griglia[riga][col].esplorata == 0) {
                 printf("[ ? ] ");
             } else {
@@ -67,7 +64,6 @@ static void disegna_schermo(const Dungeon *d, int mio_pid) {
            mio_pid, me.hp, me.tesori_raccolti, me.mostri_uccisi, me.trappole_subite);
 }
 
- 
 static int leggi_intero(const char *prompt) {
     int x;
     char buf[64];
@@ -78,6 +74,64 @@ static int leggi_intero(const char *prompt) {
         if (sscanf(buf, "%d", &x) == 1) return x;
         printf("Input non valido, riprova.\n");
     }
+}
+
+static int gestisci_lobby_owner_lato_client(int sock) {
+    while (1) {
+        PacchettoLobby in;
+        if (recv_all(sock, &in, sizeof(in)) < 0) {
+            printf("Connessione persa.\n");
+            return -1;
+        }
+
+        if (in.tipo_messaggio == MSG_LOBBY_GAME_START) {
+            printf("\n[!] %s\n", in.payload);
+            return 0;
+        }
+
+        if (in.tipo_messaggio == MSG_LOBBY_ERRORE) {
+            printf("[ERRORE] %s\n", in.payload);
+            return -1;
+        }
+
+        PacchettoLobby out;
+        memset(&out, 0, sizeof(out));
+
+        if (in.tipo_messaggio == MSG_OWNER_PROMPT_RICHIESTA) {
+            printf("\n[OWNER] %s\n", in.payload);
+            int scelta = leggi_intero("> ");
+            out.tipo_messaggio = (scelta == 1) ? MSG_OWNER_ACCETTA : MSG_OWNER_RIFIUTA;
+        }
+        else if (in.tipo_messaggio == MSG_OWNER_PROMPT_START) {
+            printf("\n[OWNER] %s\n", in.payload);
+            int scelta = leggi_intero("> ");
+            out.tipo_messaggio = (scelta == 1) ? MSG_OWNER_START : MSG_OWNER_CONTINUA;
+        }
+        else {
+            printf("[CLIENT] Messaggio lobby inatteso: %d\n", in.tipo_messaggio);
+            return -1;
+        }
+
+        if (send_all(sock, &out, sizeof(out)) < 0) return -1;
+    }
+}
+
+static int attendi_game_start(int sock) {
+    PacchettoLobby in;
+    if (recv_all(sock, &in, sizeof(in)) < 0) {
+        printf("Connessione persa in attesa dell'avvio.\n");
+        return -1;
+    }
+    if (in.tipo_messaggio == MSG_LOBBY_GAME_START) {
+        printf("\n[!] %s\n", in.payload);
+        return 0;
+    }
+    if (in.tipo_messaggio == MSG_LOBBY_ERRORE) {
+        printf("[ERRORE] %s\n", in.payload);
+        return -1;
+    }
+    printf("[CLIENT] Messaggio inatteso in attesa di GAME_START: %d\n", in.tipo_messaggio);
+    return -1;
 }
 
 int main(void) {
@@ -93,9 +147,7 @@ int main(void) {
     if (connect(sock, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0) {
         perror("connect");
         return 1;
-    }
-
-     
+    } 
     printf("\n=== DUNGEON EXPLORER ===\n");
     printf("1. Crea un nuovo dungeon (sarai il proprietario)\n");
     printf("2. Entra in un dungeon esistente\n");
@@ -103,8 +155,10 @@ int main(void) {
 
     PacchettoLobby req;
     memset(&req, 0, sizeof(req));
+    int sono_owner = 0;
     if (scelta == 1) {
         req.tipo_messaggio = MSG_CREA_DUNGEON;
+        sono_owner = 1;
     } else if (scelta == 2) {
         req.tipo_messaggio = MSG_ENTRA_DUNGEON;
         req.dungeon_id = leggi_intero("ID del dungeon: ");
@@ -126,10 +180,27 @@ int main(void) {
         close(sock);
         return 1;
     }
+    if (resp.tipo_messaggio != MSG_LOBBY_OK) {
+        printf("Messaggio inatteso dal server: %d\n", resp.tipo_messaggio);
+        close(sock);
+        return 1;
+    }
     printf("[OK] %s\n", resp.payload);
-    int mio_pid = resp.mio_player_id;
 
-     
+    
+    if (sono_owner) {
+        if (gestisci_lobby_owner_lato_client(sock) < 0) {
+            close(sock);
+            return 1;
+        }
+    } else {
+        if (attendi_game_start(sock) < 0) {
+            close(sock);
+            return 1;
+        }
+    }
+
+    
     PacchettoStato stato_in;
     while (recv_all(sock, &stato_in, sizeof(stato_in)) == 0) {
         printf("\n>>> %s\n", stato_in.log_eventi);
@@ -141,10 +212,6 @@ int main(void) {
         } else if (stato_in.mappa.partita_finita == -1) {
             printf("\nGAME OVER! Tutti gli eroi sono morti.\n\n");
             break;
-        }
-
-        if (stato_in.mappa.eroi[mio_pid].hp <= 0) {
-            printf("\nSei caduto. Resta connesso, gli altri continuano...\n");
         }
 
         printf("\n1. Nord  2. Sud  3. Est  4. Ovest\n");

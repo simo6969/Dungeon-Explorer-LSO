@@ -10,14 +10,30 @@
 
 #define MAX_SESSIONI 16
 
+typedef enum {
+    SESS_LOBBY    = 0,
+    SESS_IN_GIOCO = 1,
+    SESS_FINITA   = 2
+} StatoSessione;
+
 typedef struct {
     int in_uso;                              
     Dungeon dungeon;                         
     int owner_sock;                          
-    int sock_giocatori[MAX_PLAYERS];        
+    int sock_giocatori[MAX_PLAYERS];         
     int mosse_ricevute;
+    StatoSessione stato;                     
+
+    
+    int joiner_sock_pendente;                
+    int decisione_owner;                     
+
     pthread_mutex_t lock;
-    pthread_cond_t  cond_turno;
+    pthread_cond_t  cond_turno;              
+    pthread_cond_t  cond_owner;              
+    pthread_cond_t  cond_pending_risolto;    
+    pthread_cond_t  cond_pending_libero;     
+    pthread_cond_t  cond_partita_iniziata;   
 } Sessione;
 
 static Sessione sessioni[MAX_SESSIONI];
@@ -60,9 +76,16 @@ static int crea_sessione(int owner_sock) {
     memset(s, 0, sizeof(*s));
     s->in_uso = 1;
     s->owner_sock = owner_sock;
+    s->stato = SESS_LOBBY;
+    s->joiner_sock_pendente = -1;
+    s->decisione_owner = 0;
     for (int i = 0; i < MAX_PLAYERS; i++) s->sock_giocatori[i] = -1;
     pthread_mutex_init(&s->lock, NULL);
     pthread_cond_init(&s->cond_turno, NULL);
+    pthread_cond_init(&s->cond_owner, NULL);
+    pthread_cond_init(&s->cond_pending_risolto, NULL);
+    pthread_cond_init(&s->cond_pending_libero, NULL);
+    pthread_cond_init(&s->cond_partita_iniziata, NULL);
     s->dungeon.id = prossimo_dungeon_id++;
     genera_dungeon(&s->dungeon);
     printf("[LOBBY] Creata sessione, dungeon ID=%d, owner_sock=%d\n",
@@ -87,7 +110,7 @@ static int trova_sessione(int dungeon_id) {
 
 static int aggiungi_player_alla_sessione(Sessione *s, int sock) {
     if (s->dungeon.num_eroi >= MAX_PLAYERS) return -1;
-    int pid = s->dungeon.num_eroi;            
+    int pid = s->dungeon.num_eroi;
     s->sock_giocatori[pid] = sock;
     aggiungi_giocatore(&s->dungeon, pid);
     return pid;
@@ -109,89 +132,201 @@ static void trasmetti_stato(Sessione *s, const char *log) {
 }
 
 
-void *gestisci_giocatore(void *arg) {
-    int sock = *(int *)arg;
-    free(arg);
 
-    PacchettoLobby richiesta;
-    if (recv_all(sock, &richiesta, sizeof(richiesta)) < 0) {
-        close(sock);
-        return NULL;
+
+
+
+
+
+
+
+
+
+
+
+static int gestisci_lobby_owner(Sessione *s, int owner_sock) {
+    while (1) {
+        pthread_mutex_lock(&s->lock);
+        while (s->joiner_sock_pendente == -1 && s->stato == SESS_LOBBY) {
+            pthread_cond_wait(&s->cond_owner, &s->lock);
+        }
+        if (s->stato != SESS_LOBBY) {
+            pthread_mutex_unlock(&s->lock);
+            return -1;
+        }
+        pthread_mutex_unlock(&s->lock);
+
+        
+        PacchettoLobby prompt;
+        memset(&prompt, 0, sizeof(prompt));
+        prompt.tipo_messaggio = MSG_OWNER_PROMPT_RICHIESTA;
+        snprintf(prompt.payload, sizeof(prompt.payload),
+                 "Un giocatore vuole entrare nel dungeon. Accetti? (1=Si, 2=No)");
+        if (send_all(owner_sock, &prompt, sizeof(prompt)) < 0) return -1;
+
+        PacchettoLobby risp;
+        if (recv_all(owner_sock, &risp, sizeof(risp)) < 0) return -1;
+
+        pthread_mutex_lock(&s->lock);
+        s->decisione_owner = (risp.tipo_messaggio == MSG_OWNER_ACCETTA) ? 1 : -1;
+        pthread_cond_broadcast(&s->cond_pending_risolto);
+
+        
+        while (s->joiner_sock_pendente != -1) {
+            pthread_cond_wait(&s->cond_pending_libero, &s->lock);
+        }
+        int num = s->dungeon.num_eroi;
+        pthread_mutex_unlock(&s->lock);
+
+        printf("[LOBBY] Dungeon %d: owner ha %s. Giocatori: %d/%d.\n",
+               s->dungeon.id,
+               (risp.tipo_messaggio == MSG_OWNER_ACCETTA) ? "accettato" : "rifiutato",
+               num, MAX_PLAYERS);
+
+        
+        if (num >= MIN_PLAYERS) {
+            PacchettoLobby prompt_start;
+            memset(&prompt_start, 0, sizeof(prompt_start));
+            prompt_start.tipo_messaggio = MSG_OWNER_PROMPT_START;
+            snprintf(prompt_start.payload, sizeof(prompt_start.payload),
+                     "Hai %d giocatori. Avvia partita ora? (1=Si, 2=Continua ad accettare)",
+                     num);
+            if (send_all(owner_sock, &prompt_start, sizeof(prompt_start)) < 0) return -1;
+
+            PacchettoLobby risp_start;
+            if (recv_all(owner_sock, &risp_start, sizeof(risp_start)) < 0) return -1;
+
+            if (risp_start.tipo_messaggio == MSG_OWNER_START) {
+                pthread_mutex_lock(&s->lock);
+                s->stato = SESS_IN_GIOCO;
+                pthread_cond_broadcast(&s->cond_partita_iniziata);
+                pthread_mutex_unlock(&s->lock);
+
+                PacchettoLobby start_msg;
+                memset(&start_msg, 0, sizeof(start_msg));
+                start_msg.tipo_messaggio = MSG_LOBBY_GAME_START;
+                snprintf(start_msg.payload, sizeof(start_msg.payload),
+                         "Partita avviata con %d eroi!", num);
+                if (send_all(owner_sock, &start_msg, sizeof(start_msg)) < 0) return -1;
+                return 0;
+            }
+        }
     }
+}
 
-    int idx_sessione = -1;
-    int mio_pid = -1;
+
+
+
+
+
+
+
+
+
+
+
+
+static int gestisci_lobby_joiner(Sessione *s, int joiner_sock, int *out_pid) {
     PacchettoLobby risposta;
     memset(&risposta, 0, sizeof(risposta));
 
-    if (richiesta.tipo_messaggio == MSG_CREA_DUNGEON) {
-        idx_sessione = crea_sessione(sock);
-        if (idx_sessione < 0) {
-            risposta.tipo_messaggio = MSG_LOBBY_ERRORE;
-            strncpy(risposta.payload, "Limite massimo di dungeon raggiunto.",
-                    sizeof(risposta.payload) - 1);
-            send_all(sock, &risposta, sizeof(risposta));
-            close(sock);
-            return NULL;
-        }
-        Sessione *s = &sessioni[idx_sessione];
-        pthread_mutex_lock(&s->lock);
-        mio_pid = aggiungi_player_alla_sessione(s, sock);
-        pthread_mutex_unlock(&s->lock);
+    pthread_mutex_lock(&s->lock);
 
-        risposta.tipo_messaggio = MSG_LOBBY_OK;
-        risposta.dungeon_id = s->dungeon.id;
-        risposta.mio_player_id = mio_pid;
-        snprintf(risposta.payload, sizeof(risposta.payload),
-                 "Dungeon #%d creato. Sei il PROPRIETARIO (player %d).",
-                 s->dungeon.id, mio_pid);
+    
+    while (s->joiner_sock_pendente != -1 && s->stato == SESS_LOBBY) {
+        pthread_cond_wait(&s->cond_pending_libero, &s->lock);
     }
-    else if (richiesta.tipo_messaggio == MSG_ENTRA_DUNGEON) {
-        idx_sessione = trova_sessione(richiesta.dungeon_id);
-        if (idx_sessione < 0) {
-            risposta.tipo_messaggio = MSG_LOBBY_ERRORE;
-            snprintf(risposta.payload, sizeof(risposta.payload),
-                     "Dungeon #%d non trovato.", richiesta.dungeon_id);
-            send_all(sock, &risposta, sizeof(risposta));
-            close(sock);
-            return NULL;
-        }
-        Sessione *s = &sessioni[idx_sessione];
-        pthread_mutex_lock(&s->lock);
-        mio_pid = aggiungi_player_alla_sessione(s, sock);
+    if (s->stato != SESS_LOBBY) {
         pthread_mutex_unlock(&s->lock);
-
-        if (mio_pid < 0) {
-            risposta.tipo_messaggio = MSG_LOBBY_ERRORE;
-            strncpy(risposta.payload, "Dungeon pieno.",
-                    sizeof(risposta.payload) - 1);
-            send_all(sock, &risposta, sizeof(risposta));
-            close(sock);
-            return NULL;
-        }
-        risposta.tipo_messaggio = MSG_LOBBY_OK;
-        risposta.dungeon_id = s->dungeon.id;
-        risposta.mio_player_id = mio_pid;
-        snprintf(risposta.payload, sizeof(risposta.payload),
-                 "Entrato nel dungeon #%d come player %d.",
-                 s->dungeon.id, mio_pid);
-    }
-    else {
         risposta.tipo_messaggio = MSG_LOBBY_ERRORE;
-        strncpy(risposta.payload, "Comando di lobby non riconosciuto.",
+        strncpy(risposta.payload, "La partita e' gia' iniziata o terminata.",
                 sizeof(risposta.payload) - 1);
-        send_all(sock, &risposta, sizeof(risposta));
-        close(sock);
-        return NULL;
+        send_all(joiner_sock, &risposta, sizeof(risposta));
+        return -1;
+    }
+    if (s->dungeon.num_eroi >= MAX_PLAYERS) {
+        pthread_mutex_unlock(&s->lock);
+        risposta.tipo_messaggio = MSG_LOBBY_ERRORE;
+        strncpy(risposta.payload, "Il dungeon e' pieno.",
+                sizeof(risposta.payload) - 1);
+        send_all(joiner_sock, &risposta, sizeof(risposta));
+        return -1;
     }
 
-    if (send_all(sock, &risposta, sizeof(risposta)) < 0) {
-        close(sock);
-        return NULL;
+    s->joiner_sock_pendente = joiner_sock;
+    s->decisione_owner = 0;
+    pthread_cond_signal(&s->cond_owner);
+
+    
+    while (s->decisione_owner == 0 && s->stato == SESS_LOBBY) {
+        pthread_cond_wait(&s->cond_pending_risolto, &s->lock);
     }
 
-    Sessione *s = &sessioni[idx_sessione];
+    int accettato = (s->decisione_owner == 1);
+    int pid = -1;
 
+    if (accettato) {
+        pid = aggiungi_player_alla_sessione(s, joiner_sock);
+    }
+    s->joiner_sock_pendente = -1;
+    s->decisione_owner = 0;
+    pthread_cond_broadcast(&s->cond_pending_libero);
+
+    pthread_mutex_unlock(&s->lock);
+
+    if (!accettato) {
+        risposta.tipo_messaggio = MSG_LOBBY_ERRORE;
+        strncpy(risposta.payload, "Richiesta rifiutata dal proprietario.",
+                sizeof(risposta.payload) - 1);
+        send_all(joiner_sock, &risposta, sizeof(risposta));
+        return -1;
+    }
+
+    
+    risposta.tipo_messaggio = MSG_LOBBY_OK;
+    risposta.dungeon_id = s->dungeon.id;
+    risposta.mio_player_id = pid;
+    snprintf(risposta.payload, sizeof(risposta.payload),
+             "Sei stato accettato nel dungeon #%d come player %d. In attesa che l'owner avvii la partita...",
+             s->dungeon.id, pid);
+    if (send_all(joiner_sock, &risposta, sizeof(risposta)) < 0) return -1;
+
+    pthread_mutex_lock(&s->lock);
+    while (s->stato == SESS_LOBBY) {
+        pthread_cond_wait(&s->cond_partita_iniziata, &s->lock);
+    }
+    int stato_finale = s->stato;
+    pthread_mutex_unlock(&s->lock);
+
+    if (stato_finale != SESS_IN_GIOCO) {
+        
+        PacchettoLobby fine;
+        memset(&fine, 0, sizeof(fine));
+        fine.tipo_messaggio = MSG_LOBBY_ERRORE;
+        strncpy(fine.payload, "La partita e' stata annullata.",
+                sizeof(fine.payload) - 1);
+        send_all(joiner_sock, &fine, sizeof(fine));
+        return -1;
+    }
+
+    PacchettoLobby start_msg;
+    memset(&start_msg, 0, sizeof(start_msg));
+    start_msg.tipo_messaggio = MSG_LOBBY_GAME_START;
+    strncpy(start_msg.payload, "L'owner ha avviato la partita!",
+            sizeof(start_msg.payload) - 1);
+    if (send_all(joiner_sock, &start_msg, sizeof(start_msg)) < 0) return -1;
+
+    *out_pid = pid;
+    return 0;
+}
+
+
+
+
+
+
+static void loop_di_gioco(Sessione *s, int sock, int mio_pid) {
+    
     pthread_mutex_lock(&s->lock);
     {
         PacchettoStato primo;
@@ -242,11 +377,100 @@ void *gestisci_giocatore(void *arg) {
         }
 
         if (s->dungeon.partita_finita != 0) {
+            s->stato = SESS_FINITA;
             pthread_mutex_unlock(&s->lock);
             break;
         }
         pthread_mutex_unlock(&s->lock);
     }
+}
+
+
+
+
+
+void *gestisci_giocatore(void *arg) {
+    int sock = *(int *)arg;
+    free(arg);
+
+    PacchettoLobby richiesta;
+    if (recv_all(sock, &richiesta, sizeof(richiesta)) < 0) {
+        close(sock);
+        return NULL;
+    }
+
+    int idx_sessione = -1;
+    int mio_pid = -1;
+    int sono_owner = 0;
+
+    if (richiesta.tipo_messaggio == MSG_CREA_DUNGEON) {
+        sono_owner = 1;
+        idx_sessione = crea_sessione(sock);
+        if (idx_sessione < 0) {
+            PacchettoLobby err;
+            memset(&err, 0, sizeof(err));
+            err.tipo_messaggio = MSG_LOBBY_ERRORE;
+            strncpy(err.payload, "Limite massimo di dungeon raggiunto.",
+                    sizeof(err.payload) - 1);
+            send_all(sock, &err, sizeof(err));
+            close(sock);
+            return NULL;
+        }
+        Sessione *s = &sessioni[idx_sessione];
+        pthread_mutex_lock(&s->lock);
+        mio_pid = aggiungi_player_alla_sessione(s, sock);
+        pthread_mutex_unlock(&s->lock);
+
+        PacchettoLobby ok;
+        memset(&ok, 0, sizeof(ok));
+        ok.tipo_messaggio = MSG_LOBBY_OK;
+        ok.dungeon_id = s->dungeon.id;
+        ok.mio_player_id = mio_pid;
+        snprintf(ok.payload, sizeof(ok.payload),
+                 "Dungeon #%d creato. Sei il PROPRIETARIO (player %d). Attendo richieste...",
+                 s->dungeon.id, mio_pid);
+        if (send_all(sock, &ok, sizeof(ok)) < 0) { close(sock); return NULL; }
+    }
+    else if (richiesta.tipo_messaggio == MSG_ENTRA_DUNGEON) {
+        idx_sessione = trova_sessione(richiesta.dungeon_id);
+        if (idx_sessione < 0) {
+            PacchettoLobby err;
+            memset(&err, 0, sizeof(err));
+            err.tipo_messaggio = MSG_LOBBY_ERRORE;
+            snprintf(err.payload, sizeof(err.payload),
+                     "Dungeon #%d non trovato.", richiesta.dungeon_id);
+            send_all(sock, &err, sizeof(err));
+            close(sock);
+            return NULL;
+        }
+        Sessione *s = &sessioni[idx_sessione];
+        if (gestisci_lobby_joiner(s, sock, &mio_pid) < 0) {
+            close(sock);
+            return NULL;
+        }
+    }
+    else {
+        PacchettoLobby err;
+        memset(&err, 0, sizeof(err));
+        err.tipo_messaggio = MSG_LOBBY_ERRORE;
+        strncpy(err.payload, "Comando di lobby non riconosciuto.",
+                sizeof(err.payload) - 1);
+        send_all(sock, &err, sizeof(err));
+        close(sock);
+        return NULL;
+    }
+
+    Sessione *s = &sessioni[idx_sessione];
+
+    
+    if (sono_owner) {
+        if (gestisci_lobby_owner(s, sock) < 0) {
+            close(sock);
+            return NULL;
+        }
+    }
+
+    loop_di_gioco(s, sock, mio_pid);
 
     printf("[THREAD] Dungeon %d, player %d disconnesso.\n", s->dungeon.id, mio_pid);
     pthread_mutex_lock(&s->lock);
@@ -258,7 +482,7 @@ void *gestisci_giocatore(void *arg) {
 
 int main(void) {
     setbuf(stdout, NULL);
-    srand((unsigned)time(NULL));   
+    srand((unsigned)time(NULL));
 
     int server_socket, client_socket;
     struct sockaddr_in address;
