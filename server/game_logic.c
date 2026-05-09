@@ -71,6 +71,7 @@ void aggiungi_giocatore(Dungeon *dungeon, int player_id) {
     printf("[GAME] Dungeon %d: giocatore %d spawnato a (0,0).\n", dungeon->id, player_id);
 }
 
+
 void muovi_giocatore(Dungeon *dungeon, int player_index, int direzione) {
     Giocatore *eroe = &dungeon->eroi[player_index];
 

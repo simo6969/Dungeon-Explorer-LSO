@@ -4,6 +4,7 @@
 #include <unistd.h>
 #include <arpa/inet.h>
 #include <sys/socket.h>
+#include <netdb.h>
 #include "protocol.h"
 
 static int recv_all(int sock, void *buf, size_t len) {
@@ -134,20 +135,108 @@ static int attendi_game_start(int sock) {
     return -1;
 }
 
+static int loop_di_gioco_client(int sock) {
+    PacchettoStato stato_in;
+    while (recv_all(sock, &stato_in, sizeof(stato_in)) == 0) {
+        printf("\n>>> %s\n", stato_in.log_eventi);
+        disegna_schermo(&stato_in.mappa, stato_in.mio_player_id);
+
+        if (stato_in.mappa.partita_finita == 1) {
+            printf("\nMISSIONE COMPIUTA! Il gruppo e' salvo.\n");
+            return 0;
+        }
+        if (stato_in.mappa.partita_finita == -1) {
+            printf("\nGAME OVER! Tutti gli eroi sono morti.\n");
+            return 0;
+        }
+
+        
+        
+        if (stato_in.mappa.eroi[stato_in.mio_player_id].hp <= 0) {
+            printf("\n[Sei caduto in battaglia. Resti come spettatore...]\n");
+            continue;
+        }
+
+        printf("\n1. Nord  2. Sud  3. Est  4. Ovest\n");
+        int dir = leggi_intero("Mossa: ");
+
+        PacchettoMossa mossa_out;
+        memset(&mossa_out, 0, sizeof(mossa_out));
+        mossa_out.tipo_messaggio = MSG_MOSSA;
+        mossa_out.direzione = dir;
+        if (send_all(sock, &mossa_out, sizeof(mossa_out)) < 0) return -1;
+
+        printf("\n[!] Mossa inviata. Attendo gli altri giocatori...\n");
+    }
+    return -1;
+}
+
+static int gestisci_post_partita_client(int sock, int sono_owner) {
+    if (sono_owner) {
+        PacchettoLobby in;
+        if (recv_all(sock, &in, sizeof(in)) < 0) return -1;
+        if (in.tipo_messaggio != MSG_OWNER_PROMPT_FINE) {
+            printf("[CLIENT] Atteso MSG_OWNER_PROMPT_FINE, ricevuto %d\n", in.tipo_messaggio);
+            return -1;
+        }
+        printf("\n[OWNER] %s\n", in.payload);
+        int scelta = leggi_intero("> ");
+
+        PacchettoLobby out;
+        memset(&out, 0, sizeof(out));
+        out.tipo_messaggio = (scelta == 1) ? MSG_OWNER_RIGIOCA : MSG_OWNER_SCIOGLI;
+        if (send_all(sock, &out, sizeof(out)) < 0) return -1;
+    }
+
+    PacchettoLobby in;
+    if (recv_all(sock, &in, sizeof(in)) < 0) {
+        printf("Connessione persa nel post-partita.\n");
+        return -1;
+    }
+    if (in.tipo_messaggio == MSG_FINE_RIGIOCA) {
+        printf("\n[!] %s\n", in.payload);
+        return 0;
+    }
+    if (in.tipo_messaggio == MSG_FINE_SCIOGLI) {
+        printf("\n[!] %s\n", in.payload);
+        return -1;
+    }
+    printf("[CLIENT] Messaggio inatteso nel post-partita: %d\n", in.tipo_messaggio);
+    return -1;
+}
+
+
 int main(void) {
-    int sock;
-    struct sockaddr_in serv_addr;
+    const char *host = getenv("DUNGEON_SERVER");
+    if (!host || !*host) host = "127.0.0.1";
 
-    if ((sock = socket(AF_INET, SOCK_STREAM, 0)) < 0) return 1;
-    serv_addr.sin_family = AF_INET;
-    serv_addr.sin_port = htons(PORTA_SERVER);
-    if (inet_pton(AF_INET, "127.0.0.1", &serv_addr.sin_addr) <= 0) return 1;
+    char port_str[16];
+    snprintf(port_str, sizeof(port_str), "%d", PORTA_SERVER);
 
-    printf("Connessione al server in corso...\n");
-    if (connect(sock, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0) {
-        perror("connect");
+    struct addrinfo hints, *res;
+    memset(&hints, 0, sizeof(hints));
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_STREAM;
+
+    int gai = getaddrinfo(host, port_str, &hints, &res);
+    if (gai != 0) {
+        fprintf(stderr, "Risoluzione host '%s' fallita: %s\n", host, gai_strerror(gai));
         return 1;
-    } 
+    }
+
+    int sock = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
+    if (sock < 0) { freeaddrinfo(res); return 1; }
+
+    printf("Connessione al server (%s:%d) in corso...\n", host, PORTA_SERVER);
+    if (connect(sock, res->ai_addr, res->ai_addrlen) < 0) {
+        perror("connect");
+        freeaddrinfo(res);
+        close(sock);
+        return 1;
+    }
+    freeaddrinfo(res);
+
+    
     printf("\n=== DUNGEON EXPLORER ===\n");
     printf("1. Crea un nuovo dungeon (sarai il proprietario)\n");
     printf("2. Entra in un dungeon esistente\n");
@@ -201,29 +290,10 @@ int main(void) {
     }
 
     
-    PacchettoStato stato_in;
-    while (recv_all(sock, &stato_in, sizeof(stato_in)) == 0) {
-        printf("\n>>> %s\n", stato_in.log_eventi);
-        disegna_schermo(&stato_in.mappa, stato_in.mio_player_id);
-
-        if (stato_in.mappa.partita_finita == 1) {
-            printf("\nMISSIONE COMPIUTA! Il gruppo e' salvo.\n\n");
-            break;
-        } else if (stato_in.mappa.partita_finita == -1) {
-            printf("\nGAME OVER! Tutti gli eroi sono morti.\n\n");
-            break;
-        }
-
-        printf("\n1. Nord  2. Sud  3. Est  4. Ovest\n");
-        int dir = leggi_intero("Mossa: ");
-
-        PacchettoMossa mossa_out;
-        memset(&mossa_out, 0, sizeof(mossa_out));
-        mossa_out.tipo_messaggio = MSG_MOSSA;
-        mossa_out.direzione = dir;
-        if (send_all(sock, &mossa_out, sizeof(mossa_out)) < 0) break;
-
-        printf("\n[!] Mossa inviata. Attendo gli altri giocatori...\n");
+    while (1) {
+        if (loop_di_gioco_client(sock) != 0) break;       
+        if (gestisci_post_partita_client(sock, sono_owner) != 0) break;  
+        
     }
 
     printf("\nConnessione chiusa.\n");

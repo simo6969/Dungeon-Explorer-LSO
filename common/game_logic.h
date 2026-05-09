@@ -6,6 +6,7 @@
 #define MIN_PLAYERS 2
 #define HP_INIZIALI 100
 
+
 #define VUOTA 0
 #define MOSTRO 1
 #define TESORO 2

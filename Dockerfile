@@ -1,11 +1,19 @@
-FROM gcc:latest
+
+FROM gcc:14
+
 
 WORKDIR /app
 
+
 COPY . .
 
-RUN make server_app
+
+
+RUN make clean && make
+
 
 EXPOSE 8080
+
+
 
 CMD ["./server/server_app"]
