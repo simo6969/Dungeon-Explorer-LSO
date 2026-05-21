@@ -150,8 +150,6 @@ static int loop_di_gioco_client(int sock) {
             return 0;
         }
 
-        
-        
         if (stato_in.mappa.eroi[stato_in.mio_player_id].hp <= 0) {
             printf("\n[Sei caduto in battaglia. Resti come spettatore...]\n");
             continue;
@@ -205,8 +203,8 @@ static int gestisci_post_partita_client(int sock, int sono_owner) {
     return -1;
 }
 
-
 int main(void) {
+
     const char *host = getenv("DUNGEON_SERVER");
     if (!host || !*host) host = "127.0.0.1";
 
@@ -236,7 +234,6 @@ int main(void) {
     }
     freeaddrinfo(res);
 
-    
     printf("\n=== DUNGEON EXPLORER ===\n");
     printf("1. Crea un nuovo dungeon (sarai il proprietario)\n");
     printf("2. Entra in un dungeon esistente\n");
@@ -276,7 +273,6 @@ int main(void) {
     }
     printf("[OK] %s\n", resp.payload);
 
-    
     if (sono_owner) {
         if (gestisci_lobby_owner_lato_client(sock) < 0) {
             close(sock);
@@ -289,11 +285,10 @@ int main(void) {
         }
     }
 
-    
     while (1) {
-        if (loop_di_gioco_client(sock) != 0) break;       
-        if (gestisci_post_partita_client(sock, sono_owner) != 0) break;  
-        
+        if (loop_di_gioco_client(sock) != 0) break;
+        if (gestisci_post_partita_client(sock, sono_owner) != 0) break;
+
     }
 
     printf("\nConnessione chiusa.\n");

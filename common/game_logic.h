@@ -6,7 +6,6 @@
 #define MIN_PLAYERS 2
 #define HP_INIZIALI 100
 
-
 #define VUOTA 0
 #define MOSTRO 1
 #define TESORO 2
@@ -19,24 +18,24 @@ typedef struct {
 } Stanza;
 
 typedef struct {
-    int player_id;          
-    int attivo;             
+    int player_id;
+    int attivo;
     int x, y;
     int hp;
     int mossa_pronta;
     int direzione_scelta;
-    
+
     int tesori_raccolti;
     int mostri_uccisi;
     int trappole_subite;
 } Giocatore;
 
 typedef struct {
-    int id;                                  
+    int id;
     Stanza griglia[DIM_MAPPA][DIM_MAPPA];
     Giocatore eroi[MAX_PLAYERS];
     int num_eroi;
-    int partita_finita;                      
+    int partita_finita;
 } Dungeon;
 
 void genera_dungeon(Dungeon *dungeon);

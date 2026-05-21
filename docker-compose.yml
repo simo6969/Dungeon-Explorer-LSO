@@ -1,35 +1,21 @@
 services:
-  # ----------------------------------------------------------------
-  # Server: rimane attivo in ascolto sulla porta 8080.
-  # Si avvia con:   docker compose up dungeon_server
-  # (oppure -d per metterlo in background)
-  # ----------------------------------------------------------------
   dungeon_server:
     build: .
     image: dungeon_explorer:latest
     container_name: dungeon_server
     ports:
-      - "8080:8080"          # mappa la 8080 dell'host alla 8080 del container
-    stdin_open: true         # mantiene aperto stdin per leggere i log
-    tty: true                # alloca un pseudo-terminale (output piu' leggibile)
-
-  # ----------------------------------------------------------------
-  # Client: e' un'applicazione interattiva, NON viene avviata da `up`.
-  # Va lanciata con:   docker compose run --rm dungeon_client
-  # In questo modo se ne possono aprire 2-4 in parallelo (uno per
-  # ogni terminale) per simulare i giocatori.
-  # ----------------------------------------------------------------
+      - "8080:8080"       
+    stdin_open: true    
+    tty: true               
   dungeon_client:
-    image: dungeon_explorer:latest         # riusa l'immagine costruita dal server
+    image: dungeon_explorer:latest   
     build: .
     depends_on:
       - dungeon_server
     environment:
-      # Hostname del server sulla rete del compose: corrisponde al
-      # nome del servizio "dungeon_server".
+
       DUNGEON_SERVER: dungeon_server
     stdin_open: true
     tty: true
     command: ["./client/client_app"]
-    # Non definiamo "container_name" perche' vogliamo poter lanciare
-    # piu' istanze in parallelo con `docker compose run`.
+

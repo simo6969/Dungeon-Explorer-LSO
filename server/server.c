@@ -14,32 +14,31 @@
 typedef enum {
     SESS_LOBBY        = 0,
     SESS_IN_GIOCO     = 1,
-    SESS_POST_PARTITA = 2,   
+    SESS_POST_PARTITA = 2,
     SESS_FINITA       = 3
 } StatoSessione;
 
 typedef struct {
-    int in_uso;                              
-    Dungeon dungeon;                         
-    int owner_sock;                          
-    int sock_giocatori[MAX_PLAYERS];         
+    int in_uso;
+    Dungeon dungeon;
+    int owner_sock;
+    int sock_giocatori[MAX_PLAYERS];
     int mosse_ricevute;
-    int turno_round;                         
-    StatoSessione stato;                     
+    int turno_round;
+    StatoSessione stato;
 
-    
-    int joiner_sock_pendente;                
-    int decisione_owner;                     
-    int pid_assegnato;                       
-    int sock_decisione_per;                  
+    int joiner_sock_pendente;
+    int decisione_owner;
+    int pid_assegnato;
+    int sock_decisione_per;
 
     pthread_mutex_t lock;
-    pthread_cond_t  cond_turno;              
-    pthread_cond_t  cond_owner;              
-    pthread_cond_t  cond_pending_risolto;    
-    pthread_cond_t  cond_pending_libero;     
-    pthread_cond_t  cond_partita_iniziata;   
-    pthread_cond_t  cond_post_partita;       
+    pthread_cond_t  cond_turno;
+    pthread_cond_t  cond_owner;
+    pthread_cond_t  cond_pending_risolto;
+    pthread_cond_t  cond_pending_libero;
+    pthread_cond_t  cond_partita_iniziata;
+    pthread_cond_t  cond_post_partita;
 } Sessione;
 
 static Sessione sessioni[MAX_SESSIONI];
@@ -185,7 +184,6 @@ static int gestisci_lobby_owner(Sessione *s, int owner_sock) {
         }
         pthread_mutex_unlock(&s->lock);
 
-        
         PacchettoLobby prompt;
         memset(&prompt, 0, sizeof(prompt));
         prompt.tipo_messaggio = MSG_OWNER_PROMPT_RICHIESTA;
@@ -197,7 +195,7 @@ static int gestisci_lobby_owner(Sessione *s, int owner_sock) {
         if (recv_all(owner_sock, &risp, sizeof(risp)) < 0) return -1;
 
         pthread_mutex_lock(&s->lock);
-        
+
         int sock_pending_corrente = s->joiner_sock_pendente;
         if (risp.tipo_messaggio == MSG_OWNER_ACCETTA && sock_pending_corrente >= 0) {
             int pid = aggiungi_player_alla_sessione(s, sock_pending_corrente);
@@ -205,7 +203,7 @@ static int gestisci_lobby_owner(Sessione *s, int owner_sock) {
                 s->decisione_owner = 1;
                 s->pid_assegnato = pid;
             } else {
-                
+
                 s->decisione_owner = -1;
                 s->pid_assegnato = -1;
             }
@@ -213,7 +211,7 @@ static int gestisci_lobby_owner(Sessione *s, int owner_sock) {
             s->decisione_owner = -1;
             s->pid_assegnato = -1;
         }
-        s->sock_decisione_per = sock_pending_corrente;   
+        s->sock_decisione_per = sock_pending_corrente;
         s->joiner_sock_pendente = -1;
         pthread_cond_broadcast(&s->cond_pending_risolto);
         pthread_cond_broadcast(&s->cond_pending_libero);
@@ -227,12 +225,8 @@ static int gestisci_lobby_owner(Sessione *s, int owner_sock) {
                (decisione_finale == 1) ? "accettato" : "rifiutato",
                num, MAX_PLAYERS);
 
-        
         if (num >= MIN_PLAYERS) {
-            
-            
-            
-            
+
             int dungeon_pieno = (num >= MAX_PLAYERS);
 
             PacchettoLobby prompt_start;
@@ -257,10 +251,7 @@ static int gestisci_lobby_owner(Sessione *s, int owner_sock) {
             if (avvia) {
                 pthread_mutex_lock(&s->lock);
                 s->stato = SESS_IN_GIOCO;
-                
-                
-                
-                
+
                 pthread_cond_broadcast(&s->cond_partita_iniziata);
                 pthread_cond_broadcast(&s->cond_pending_risolto);
                 pthread_cond_broadcast(&s->cond_pending_libero);
@@ -284,7 +275,6 @@ static int gestisci_lobby_joiner(Sessione *s, int joiner_sock, int *out_pid) {
 
     pthread_mutex_lock(&s->lock);
 
-    
     while (s->joiner_sock_pendente != -1 && s->stato == SESS_LOBBY) {
         pthread_cond_wait(&s->cond_pending_libero, &s->lock);
     }
@@ -308,16 +298,10 @@ static int gestisci_lobby_joiner(Sessione *s, int joiner_sock, int *out_pid) {
     s->joiner_sock_pendente = joiner_sock;
     pthread_cond_signal(&s->cond_owner);
 
-    
-    
-    
-    
     while (s->sock_decisione_per != joiner_sock && s->stato == SESS_LOBBY) {
         pthread_cond_wait(&s->cond_pending_risolto, &s->lock);
     }
 
-    
-    
     if (s->sock_decisione_per != joiner_sock) {
         if (s->joiner_sock_pendente == joiner_sock) {
             s->joiner_sock_pendente = -1;
@@ -334,8 +318,7 @@ static int gestisci_lobby_joiner(Sessione *s, int joiner_sock, int *out_pid) {
 
     int accettato = (s->decisione_owner == 1);
     int pid = s->pid_assegnato;
-    
-    
+
     s->sock_decisione_per = -1;
 
     pthread_mutex_unlock(&s->lock);
@@ -348,7 +331,6 @@ static int gestisci_lobby_joiner(Sessione *s, int joiner_sock, int *out_pid) {
         return -1;
     }
 
-    
     risposta.tipo_messaggio = MSG_LOBBY_OK;
     risposta.dungeon_id = s->dungeon.id;
     risposta.mio_player_id = pid;
@@ -365,7 +347,7 @@ static int gestisci_lobby_joiner(Sessione *s, int joiner_sock, int *out_pid) {
     pthread_mutex_unlock(&s->lock);
 
     if (stato_finale != SESS_IN_GIOCO) {
-        
+
         PacchettoLobby fine;
         memset(&fine, 0, sizeof(fine));
         fine.tipo_messaggio = MSG_LOBBY_ERRORE;
@@ -387,7 +369,7 @@ static int gestisci_lobby_joiner(Sessione *s, int joiner_sock, int *out_pid) {
 }
 
 static int loop_di_gioco(Sessione *s, int sock, int mio_pid) {
-    
+
     pthread_mutex_lock(&s->lock);
     {
         PacchettoStato primo;
@@ -406,8 +388,6 @@ static int loop_di_gioco(Sessione *s, int sock, int mio_pid) {
     while (recv_all(sock, &mossa_in, sizeof(mossa_in)) == 0) {
         pthread_mutex_lock(&s->lock);
 
-        
-        
         if (!s->dungeon.eroi[mio_pid].attivo) {
             pthread_mutex_unlock(&s->lock);
             continue;
@@ -421,19 +401,12 @@ static int loop_di_gioco(Sessione *s, int sock, int mio_pid) {
         printf("[SERVER] Dungeon %d: player %d pronto. (%d/%d attivi)\n",
                s->dungeon.id, mio_pid, s->mosse_ricevute, conta_attivi(s));
 
-        
-        
-        
-        
         while (s->turno_round == mio_round
                && s->mosse_ricevute < conta_attivi(s)
                && s->dungeon.partita_finita == 0) {
             pthread_cond_wait(&s->cond_turno, &s->lock);
         }
 
-        
-        
-        
         if (s->turno_round == mio_round && s->dungeon.partita_finita == 0) {
             esegui_turno_e_broadcast(s);
         }
@@ -441,11 +414,11 @@ static int loop_di_gioco(Sessione *s, int sock, int mio_pid) {
         if (s->dungeon.partita_finita != 0) {
             if (s->stato == SESS_IN_GIOCO) s->stato = SESS_POST_PARTITA;
             pthread_mutex_unlock(&s->lock);
-            return 0;   
+            return 0;
         }
         pthread_mutex_unlock(&s->lock);
     }
-    return -1;   
+    return -1;
 }
 
 static void resetta_dungeon_per_rigioco(Sessione *s) {
@@ -459,13 +432,12 @@ static void resetta_dungeon_per_rigioco(Sessione *s) {
 
     memset(&s->dungeon, 0, sizeof(s->dungeon));
     s->dungeon.id = old_id;
-    genera_dungeon(&s->dungeon);   
+    genera_dungeon(&s->dungeon);
 
-    
     for (int i = 0; i < MAX_PLAYERS; i++) {
         s->sock_giocatori[i] = sock_temp[i];
         if (sock_temp[i] >= 0) {
-            aggiungi_giocatore(&s->dungeon, i);   
+            aggiungi_giocatore(&s->dungeon, i);
         }
     }
     s->mosse_ricevute = 0;
@@ -515,7 +487,7 @@ static int gestisci_post_partita(Sessione *s, int sock, int sono_owner) {
         }
 
 sciogli_forzato:
-        
+
         pthread_mutex_lock(&s->lock);
         s->stato = SESS_FINITA;
         pthread_cond_broadcast(&s->cond_post_partita);
@@ -523,10 +495,13 @@ sciogli_forzato:
         return -1;
     }
 
-    
     pthread_mutex_lock(&s->lock);
-    while (s->stato == SESS_POST_PARTITA) {
+    while (s->stato == SESS_POST_PARTITA && s->sock_giocatori[0] >= 0) {
         pthread_cond_wait(&s->cond_post_partita, &s->lock);
+    }
+    if (s->stato == SESS_POST_PARTITA && s->sock_giocatori[0] < 0) {
+        s->stato = SESS_FINITA;
+        pthread_cond_broadcast(&s->cond_post_partita);
     }
     int stato_finale = s->stato;
     pthread_mutex_unlock(&s->lock);
@@ -620,7 +595,6 @@ void *gestisci_giocatore(void *arg) {
 
     Sessione *s = &sessioni[idx_sessione];
 
-    
     if (sono_owner) {
         if (gestisci_lobby_owner(s, sock) < 0) {
             close(sock);
@@ -631,13 +605,11 @@ void *gestisci_giocatore(void *arg) {
     while (1) {
         if (loop_di_gioco(s, sock, mio_pid) < 0) break;
         if (gestisci_post_partita(s, sock, sono_owner) != 0) break;
-        
+
     }
 
     printf("[THREAD] Dungeon %d, player %d disconnesso.\n", s->dungeon.id, mio_pid);
 
-    
-    
     pthread_mutex_lock(&mutex_sessioni);
     pthread_mutex_lock(&s->lock);
 
@@ -677,8 +649,6 @@ void *gestisci_giocatore(void *arg) {
         s->stato = SESS_FINITA;
         pthread_mutex_unlock(&s->lock);
 
-        
-        
         pthread_mutex_destroy(&s->lock);
         pthread_cond_destroy(&s->cond_turno);
         pthread_cond_destroy(&s->cond_owner);
@@ -700,9 +670,6 @@ void *gestisci_giocatore(void *arg) {
 int main(void) {
     setbuf(stdout, NULL);
 
-    
-    
-    
     signal(SIGPIPE, SIG_IGN);
 
     srand((unsigned)time(NULL));
